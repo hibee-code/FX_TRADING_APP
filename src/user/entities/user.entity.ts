@@ -1,17 +1,21 @@
 import { Transaction } from "../../transaction/entities/transaction.entity";
 import { Wallet } from "../../wallet/entities/wallet.entity";
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, UpdateDateColumn } from "typeorm";
+import { UserRole } from "../enum/user.enum";
 
 @Entity()
 export class User {
   @PrimaryGeneratedColumn({type: 'bigint'})
   id: string;
 
-  @Column({ unique: true })
+  @Column({ type : 'varchar', unique: true })
   email: string;
 
   @Column({ type: 'varchar'})
   password: string;
+
+  @Column({ type: 'enum', enum: UserRole, default: UserRole.USER })
+  role: UserRole;
 
   @Column({ default: false })
   isVerified: boolean;
