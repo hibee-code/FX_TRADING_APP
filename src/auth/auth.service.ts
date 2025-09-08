@@ -1,32 +1,92 @@
-import { BadRequestException, Injectable, UnauthorizedException, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException, Inject, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserService } from '../user/user.service';
+import { UserRole } from '../user/enum/user.enum';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
+import { ConfigService } from '@nestjs/config';
+
 
 @Injectable()
 export class AuthService {
-	constructor(
-		private readonly jwtService: JwtService,
-		private readonly userService: UserService,
-		@Inject('REDIS_CLIENT') private readonly redisClient: any,
-	) {}
+  private readonly logger = new Logger(AuthService.name);
 
-	private ACCESS_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
-	private REFRESH_EXPIRES_SECONDS = parseInt(process.env.REFRESH_EXPIRES_SECONDS || '604800', 10); // 7 days
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly userService: UserService,
+    @Inject('REDIS_CLIENT') private readonly redisClient: any,
+    private readonly configService: ConfigService,
+  ) {}
 
-	async register(dto: RegisterDto) {
-		const existing = await this.userService.findByEmail(dto.email);
-		if (existing) throw new BadRequestException('Email already registered');
+  // Access config values through getters
+  private get ACCESS_EXPIRES_IN(): string {
+    return this.configService.get<string>('JWT_EXPIRES_IN', '1h');
+  }
 
-		const hashed = await bcrypt.hash(dto.password, 10);
-		const user = await this.userService.create(dto.email, hashed);
-		return { id: (user as any).id, email: (user as any).email };
-	}
+  private get REFRESH_EXPIRES_SECONDS(): number {
+    return this.configService.get<number>('REFRESH_EXPIRES_SECONDS', 604800); // 7 days
+  }
 
-	async login(dto: LoginDto) {
+  private get BCRYPT_SALT_ROUNDS(): number {
+    return this.configService.get<number>('BCRYPT_SALT_ROUNDS', 12);
+  }
+
+  private get OTP_HASH_SALT_ROUNDS(): number {
+    return this.configService.get<number>('OTP_HASH_SALT_ROUNDS', 10);
+  }
+
+  private get OTP_TTL_SECONDS(): number {
+    return this.configService.get<number>('OTP_TTL_SECONDS', 900); // 15 minutes
+  }
+
+  async register(dto: RegisterDto) {
+    const existing = await this.userService.findByEmail(dto.email);
+    if (existing) {
+      throw new BadRequestException('Email already registered');
+    }
+
+    // 2. Validate password length
+    if (!dto.password || dto.password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+
+    // 3. Hash password
+    const hashedPassword = await bcrypt.hash(dto.password, this.BCRYPT_SALT_ROUNDS);
+
+    // 4. Generate OTP
+    const otp = String(randomInt(100000, 1000000));
+    const hashedOtp = await bcrypt.hash(otp, this.OTP_HASH_SALT_ROUNDS);
+    const verificationExpiry = new Date(Date.now() + this.OTP_TTL_SECONDS * 1000);
+
+    const user = await this.userService.create(dto.email, hashedPassword, UserRole.USER, {
+      verificationToken: hashedOtp,
+      verificationTokenExpiry: verificationExpiry,
+      isVerified: false,
+    });
+
+    try {
+      const payload = {
+        to: dto.email,
+        type: 'verification_otp',
+        data: {
+          otp,
+          expiresIn: this.OTP_TTL_SECONDS,
+        },
+      };
+      await this.redisClient.publish?.('mail:send', JSON.stringify(payload));
+    } catch (e) {
+      this.logger.warn('Failed to enqueue verification email', e as any);
+    }
+    return {
+      id: (user as any).id,
+      email: (user as any).email,
+      message: 'Registered — check your email for the verification code',
+    };
+  }
+
+  	async login(dto: LoginDto) {
 		const user = await this.userService.findByEmail(dto.email);
 		if (!user) throw new UnauthorizedException('Invalid credentials');
 
@@ -95,3 +155,6 @@ export class AuthService {
 		return { success: true };
 	}
 }
+
+
+

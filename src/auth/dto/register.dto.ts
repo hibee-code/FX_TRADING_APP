@@ -10,5 +10,5 @@ export class RegisterDto {
   password: string;
 
   @IsEnum(UserRole, { message: 'Role must be user, admin, or manager' })
-  role: UserRole = UserRole.USER; // default
+  role: UserRole = UserRole.USER; 
 }

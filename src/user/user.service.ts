@@ -11,12 +11,20 @@ export class UserService {
 		private usersRepository: Repository<User>,
 	) {}
 
-	async create(email: string, password: string, role) {
-	const user = this.usersRepository.create({
-  	email: email,
-  	password: password,
-  	role: UserRole.USER,
-});
+		async create(
+		email: string,
+		password: string,
+		role: UserRole = UserRole.USER,
+		extras?: Partial<User>,
+	) {
+		const user = this.usersRepository.create({
+			email,
+			password,
+			role,
+			isVerified: extras?.isVerified ?? false,
+			verificationToken: extras?.verificationToken,
+			verificationTokenExpiry: extras?.verificationTokenExpiry,
+		} as Partial<User>);
 		return this.usersRepository.save(user);
 	}
 
